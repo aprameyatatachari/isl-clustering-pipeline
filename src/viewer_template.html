@@ -1,0 +1,385 @@
+<title>ISL Pose Map Viewer</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14161a; --muted: #6b7280;
+    --line: #d9dde3; --accent: #2563eb; --accent-soft: #dbeafe;
+    --bone: #334155; --hand: #2563eb; --idle: #059669;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #171a21; --ink: #e7e9ee; --muted: #9aa3b2;
+      --line: #262b35; --accent: #60a5fa; --accent-soft: #1e3a5f;
+      --bone: #cbd5e1; --hand: #60a5fa; --idle: #34d399;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --ink: #e7e9ee; --muted: #9aa3b2;
+    --line: #262b35; --accent: #60a5fa; --accent-soft: #1e3a5f;
+    --bone: #cbd5e1; --hand: #60a5fa; --idle: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .wrap {
+    display: grid; grid-template-columns: 250px minmax(0,1fr) 250px;
+    gap: 16px; padding: 16px; align-items: start;
+  }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .panel h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 0; padding: 12px 14px 8px;
+  }
+  /* max() keeps a usable size even where a viewport unit resolves to zero. */
+  .words { max-height: max(300px, 62vh); overflow-y: auto; padding: 0 8px 8px; }
+  .word {
+    display: flex; justify-content: space-between; gap: 8px; align-items: center;
+    width: 100%; text-align: left; padding: 7px 9px; border-radius: 7px;
+    border: 0; background: none; color: var(--ink); cursor: pointer; font: inherit; font-size: 13px;
+  }
+  .word:hover { background: var(--bg); }
+  .word[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .word .n { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .word[aria-pressed="true"] .n { color: var(--accent); }
+  .stage { padding: 8px; display: flex; flex-direction: column; align-items: center; }
+  /* An SVG with only a viewBox does not always derive an intrinsic height, so
+     the ratio is set explicitly (and refined from the viewBox at runtime). */
+  svg { width: 100%; height: auto; aspect-ratio: 2 / 3; max-height: max(340px, 58vh);
+        margin-inline: auto; display: block; }
+  .now { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; padding: 4px 0 0;
+         font-variant-numeric: tabular-nums; }
+  .now.idle { color: var(--idle); }
+  .mirror { color: var(--muted); font-size: 12px; display: flex; align-items: center;
+            gap: 6px; cursor: pointer; }
+  .opts { display: flex; gap: 16px; padding-top: 6px; flex-wrap: wrap; justify-content: center; }
+  #vrmwrap { width: 100%; }
+  #vrmstage { width: 100%; height: max(340px, 58vh); }
+  #vrmstage canvas { width: 100% !important; height: 100% !important; display: block; }
+  .vrmstatus { color: var(--muted); font-size: 12px; text-align: center; min-height: 1em; }
+  .rot { padding: 4px 14px 14px; }
+  .rot table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rot th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 0; }
+  .rot td { text-align: right; font-variant-numeric: tabular-nums; padding: 4px 0; }
+  .rot tr.sec th { padding-top: 10px; color: var(--ink); font-weight: 600; }
+  .controls { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  button.act {
+    background: var(--accent); color: #fff; border: 0; border-radius: 7px;
+    padding: 7px 12px; font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;
+  }
+  button.ghost, select.ghost {
+    background: none; border: 1px solid var(--line); color: var(--ink);
+    border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .tl { position: relative; height: 28px; border: 1px solid var(--line);
+        border-radius: 6px; overflow: hidden; background: var(--bg); }
+  .seg { position: absolute; top: 0; bottom: 0; border-right: 1px solid var(--panel);
+         font-size: 9px; color: #fff; overflow: hidden; white-space: nowrap; padding: 2px 3px; }
+  .cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+  .empty { color: var(--muted); font-size: 12px; line-height: 1.7; }
+  code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg);
+         padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); }
+</style>
+
+<header>
+  <h1>ISL Pose Map Viewer</h1>
+  <span class="meta" id="hdr"></span>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>Pose words</h2>
+    <div class="words" id="words"></div>
+  </div>
+
+  <div class="panel">
+    <div class="stage">
+      <div id="vrmwrap" hidden>
+        <div id="vrmstage"></div>
+        <div id="vrmstatus" class="vrmstatus"></div>
+      </div>
+      <svg id="fig" viewBox="-3.6 -4.6 7.2 8.6" aria-label="avatar pose"></svg>
+      <div class="now" id="now">&mdash;</div>
+      <div class="opts">
+        <label class="mirror"><input type="checkbox" id="mirror" checked> mirror view</label>
+        <label class="mirror" id="vrmtoggle" hidden><input type="checkbox" id="usevrm" checked> 3D avatar</label>
+      </div>
+    </div>
+    <div class="controls" id="seqbox"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Target rotations</h2>
+    <div class="rot" id="rot"></div>
+  </div>
+</div>
+
+__VRM_SCRIPTS__
+<script>
+const POSE_MAP = __POSE_MAP__;
+const SEQUENCES = __SEQUENCES__;
+
+// Index layout of the 57 stored keypoints, mirroring src/features.py
+const B = {LSHO:0, RSHO:1, LELB:2, RELB:3, LWRI:4, RWRI:5, LHIP:12, RHIP:13, NOSE:14};
+const LH = 15, RH = 36;                    // hand blocks, 21 points each
+const BONES = [
+  [B.LSHO,B.RSHO],[B.LSHO,B.LELB],[B.LELB,B.LWRI],[B.RSHO,B.RELB],[B.RELB,B.RWRI],
+  [B.LSHO,B.LHIP],[B.RSHO,B.RHIP],[B.LHIP,B.RHIP],
+];
+const FINGERS = [[0,1,2,3,4],[0,5,6,7,8],[0,9,10,11,12],[0,13,14,15,16],[0,17,18,19,20]];
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const names = Object.keys(POSE_MAP).sort((a,b) => POSE_MAP[b].frames - POSE_MAP[a].frames);
+let player = null;
+
+function el(tag, attrs) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+
+// Mirrored is the signer's own view (as in a mirror); unmirrored matches what
+// the camera recorded, which is what you want when comparing to a source video.
+let MIRROR = true;
+let lastPose = null;
+const X = p => (MIRROR ? -p[0] : p[0]), Y = p => p[1];
+
+function draw(pose) {
+  lastPose = pose;
+  window.lastPose = pose;
+  if (window.VRM_APPLY) window.VRM_APPLY(pose);
+  const fig = document.getElementById("fig");
+  fig.replaceChildren();
+
+  const head = pose[B.NOSE];
+  fig.appendChild(el("circle", {cx: X(head), cy: Y(head) - 0.1, r: 0.65,
+    fill: "none", stroke: "var(--bone)", "stroke-width": 0.09}));
+
+  for (const [a,b] of BONES)
+    fig.appendChild(el("line", {x1:X(pose[a]), y1:Y(pose[a]), x2:X(pose[b]), y2:Y(pose[b]),
+      stroke:"var(--bone)", "stroke-width":0.11, "stroke-linecap":"round"}));
+
+  for (const j of [B.LELB, B.RELB, B.LWRI, B.RWRI])
+    fig.appendChild(el("circle", {cx:X(pose[j]), cy:Y(pose[j]), r:0.08, fill:"var(--bone)"}));
+
+  for (const base of [LH, RH]) {
+    const pts = pose.slice(base, base + 21);
+    // An undetected hand collapses onto its wrist; skip drawing that blob.
+    const spread = Math.max(...pts.map(p => Math.hypot(p[0]-pts[0][0], p[1]-pts[0][1])));
+    if (spread < 0.03) continue;
+    for (const f of FINGERS) {
+      const d = f.map((i,j) => (j ? "L" : "M") + X(pts[i]) + " " + Y(pts[i])).join(" ");
+      fig.appendChild(el("path", {d, fill:"none", stroke:"var(--hand)",
+        "stroke-width":0.05, "stroke-linecap":"round", "stroke-linejoin":"round"}));
+    }
+    for (const p of pts)
+      fig.appendChild(el("circle", {cx:X(p), cy:Y(p), r:0.032, fill:"var(--hand)"}));
+  }
+}
+
+// Fit the camera to the poses actually present, so the figure fills the frame
+// whatever the dataset looks like, instead of relying on hardcoded extents.
+function fitViewBox() {
+  let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+  for (const n of names) {
+    for (const p of POSE_MAP[n].average_pose) {
+      const x = -p[0], y = p[1];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  minY -= 0.85;                       // room for the head circle above the nose
+  const padX = 0.35, padY = 0.3;
+  let x = minX - padX, y = minY - padY;
+  let w = (maxX - minX) + 2*padX, h = (maxY - minY) + 2*padY;
+  const minAspect = 0.62;             // keep the figure from going pencil-thin
+  if (w / h < minAspect) {
+    const w2 = h * minAspect;
+    x -= (w2 - w) / 2;
+    w = w2;
+  }
+  const fig = document.getElementById("fig");
+  fig.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+  fig.style.aspectRatio = `${w} / ${h}`;
+}
+
+function lerpPose(a, b, t) {
+  return a.map((p,i) => [p[0]+(b[i][0]-p[0])*t, p[1]+(b[i][1]-p[1])*t, p[2]+(b[i][2]-p[2])*t]);
+}
+
+function showRotations(name) {
+  const r = POSE_MAP[name].target_rotations, d = POSE_MAP[name].description;
+  const rows = [
+    `<tr><th>zone</th><td>${d.side} / ${d.zone}</td></tr>`,
+    `<tr><th>hands</th><td>${d.contact} (${d.hands_gap})</td></tr>`,
+  ];
+  for (const side of ["left","right"]) {
+    rows.push(`<tr class="sec"><th colspan="2">${side} arm</th></tr>`);
+    rows.push(`<tr><th>shoulder pitch</th><td>${r[side+"_shoulder"].pitch.toFixed(1)}&deg;</td></tr>`);
+    rows.push(`<tr><th>shoulder yaw</th><td>${r[side+"_shoulder"].yaw.toFixed(1)}&deg;</td></tr>`);
+    rows.push(`<tr><th>elbow flexion</th><td>${r[side+"_elbow"].flexion.toFixed(1)}&deg;</td></tr>`);
+    rows.push(`<tr><th>wrist dir</th><td>${r[side+"_wrist"].dir.map(v=>v.toFixed(2)).join(", ")}</td></tr>`);
+  }
+  document.getElementById("rot").innerHTML = `<table>${rows.join("")}</table>`;
+}
+
+function highlight(name) {
+  for (const b of document.querySelectorAll(".word"))
+    b.setAttribute("aria-pressed", String(b.dataset.name === name));
+}
+
+function select(name, opts) {
+  if (!opts || opts.stopPlayback !== false) stop();
+  draw(POSE_MAP[name].average_pose);
+  showRotations(name);
+  const now = document.getElementById("now");
+  now.textContent = name;
+  now.classList.toggle("idle", POSE_MAP[name].is_idle);
+  highlight(name);
+}
+
+function buildWordList() {
+  const box = document.getElementById("words");
+  for (const n of names) {
+    const b = document.createElement("button");
+    b.className = "word";
+    b.dataset.name = n;
+    b.setAttribute("aria-pressed", "false");
+    b.innerHTML = `<span>${n}</span><span class="n">${POSE_MAP[n].frames}</span>`;
+    b.onclick = () => select(n);
+    box.appendChild(b);
+  }
+}
+
+function stop() {
+  if (player) { cancelAnimationFrame(player.raf); player = null; }
+  const btn = document.getElementById("play");
+  if (btn) btn.textContent = "Play";
+}
+
+function buildSequencePanel() {
+  const box = document.getElementById("seqbox");
+  if (!SEQUENCES.length) {
+    box.innerHTML = `<div class="empty">No sequence loaded. Encode a video with
+      <code>cli.py encode video.MOV --out out.json</code>, then rebuild with
+      <code>cli.py viewer --sequence out.json</code> to play it back here.</div>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="row">
+      <select id="seqsel" class="ghost" style="flex:1">
+        ${SEQUENCES.map((s,i) => `<option value="${i}">${s.name}</option>`).join("")}
+      </select>
+      <button class="act" id="play">Play</button>
+      <button class="ghost" id="rst">Reset</button>
+    </div>
+    <div class="tl" id="tl"></div>
+    <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="scrub">`;
+  document.getElementById("seqsel").onchange = () => { stop(); renderTimeline(); scrubTo(0); };
+  document.getElementById("play").onclick = togglePlay;
+  document.getElementById("rst").onclick = () => { stop(); scrubTo(0); };
+  document.getElementById("scrub").oninput = e => { stop(); scrubTo(+e.target.value/1000); };
+  renderTimeline();
+  scrubTo(0);
+}
+
+const seq = () => SEQUENCES[+document.getElementById("seqsel").value];
+const seqEnd = s => s.words[s.words.length-1].end;
+
+function renderTimeline() {
+  const s = seq(), end = seqEnd(s), tl = document.getElementById("tl"), hues = {};
+  tl.replaceChildren();
+  for (const w of s.words) {
+    if (!(w.word in hues)) hues[w.word] = (Object.keys(hues).length * 47) % 360;
+    const d = document.createElement("div");
+    d.className = "seg";
+    d.style.left = (100*w.start/end) + "%";
+    d.style.width = (100*(w.end-w.start)/end) + "%";
+    d.style.background = `hsl(${hues[w.word]} 52% 42%)`;
+    d.title = `${w.word}  ${w.start.toFixed(2)}-${w.end.toFixed(2)}s`;
+    d.textContent = w.word;
+    tl.appendChild(d);
+  }
+  const c = document.createElement("div");
+  c.className = "cursor";
+  c.id = "cursor";
+  tl.appendChild(c);
+}
+
+// Each pose is held for most of its segment and blended over the final stretch,
+// so a word stays readable instead of the figure snapping between poses.
+function poseAt(s, t) {
+  const w = s.words;
+  let i = w.findIndex(x => t < x.end);
+  if (i < 0) i = w.length - 1;
+  const cur = POSE_MAP[w[i].word];
+  const nxt = w[i+1] ? POSE_MAP[w[i+1].word] : null;
+  const span = Math.max(w[i].end - w[i].start, 1e-6);
+  const local = (t - w[i].start) / span;
+  const hold = 0.7;
+  if (!nxt || local < hold) return [w[i].word, cur.average_pose];
+  return [w[i].word, lerpPose(cur.average_pose, nxt.average_pose, (local-hold)/(1-hold))];
+}
+
+function scrubTo(frac) {
+  const s = seq(), end = seqEnd(s), t = frac * end;
+  const [word, pose] = poseAt(s, t);
+  draw(pose);
+  showRotations(word);
+  const now = document.getElementById("now");
+  now.textContent = word + "   " + t.toFixed(2) + "s";
+  now.classList.toggle("idle", POSE_MAP[word].is_idle);
+  highlight(word);
+  document.getElementById("cursor").style.left = (100*frac) + "%";
+  document.getElementById("scrub").value = Math.round(frac*1000);
+}
+
+function togglePlay() {
+  if (player) { stop(); return; }
+  const s = seq(), end = seqEnd(s);
+  let from = +document.getElementById("scrub").value / 1000;
+  if (from >= 0.999) from = 0;
+  const t0 = performance.now() - from*end*1000;
+  document.getElementById("play").textContent = "Pause";
+  const tick = () => {
+    const t = (performance.now() - t0) / 1000;
+    if (t >= end) { scrubTo(1); stop(); return; }
+    scrubTo(t/end);
+    if (player) player.raf = requestAnimationFrame(tick);
+  };
+  player = {raf: requestAnimationFrame(tick)};
+}
+
+document.getElementById("hdr").textContent =
+  names.length + " pose words · " + SEQUENCES.length + " sequence(s)";
+if (window.VRM_FILE) {
+  // With a VRM loaded the skeleton becomes the secondary view, toggleable so a
+  // pose can be checked against the raw keypoints it came from.
+  const wrap = document.getElementById("vrmwrap");
+  const fig = document.getElementById("fig");
+  document.getElementById("vrmtoggle").hidden = false;
+  const sync = on => { wrap.hidden = !on; fig.style.display = on ? "none" : "block"; };
+  document.getElementById("usevrm").onchange = e => sync(e.target.checked);
+  sync(true);
+}
+
+document.getElementById("mirror").onchange = e => {
+  MIRROR = e.target.checked;
+  if (lastPose) draw(lastPose);
+};
+fitViewBox();
+buildWordList();
+buildSequencePanel();
+select(names[0], {stopPlayback: false});
+</script>
